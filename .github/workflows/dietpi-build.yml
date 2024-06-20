@@ -129,8 +129,8 @@ jobs:
         urls="\"https://dietpi.com/downloads/images/testing/\""
         for i in "$@"; do urls="$urls,\"https://dietpi.com/downloads/images/testing/${i##*/}\""; done
         IFS=,
-        curl -T "{$*}" --key /root/.ssh/id_ed25519 '\''${{ secrets.UPLOAD_URL }}testing/'\''
-        curl -H '\''Authorization: Bearer ${{ secrets.CF_TOKEN }}'\'' -H '\''Content-Type: application/json'\'' -d "{\"files\":[$urls]}" '\''https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE }}/purge_cache'\''
+        #curl -T "{$*}" --key /root/.ssh/id_ed25519 '\''${{ secrets.UPLOAD_URL }}testing/'\''
+        #curl -H '\''Authorization: Bearer ${{ secrets.CF_TOKEN }}'\'' -H '\''Content-Type: application/json'\'' -d "{\"files\":[$urls]}" '\''https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE }}/purge_cache'\''
         echo' | sudo tee upload.sh > /dev/null
         sudo gpg --batch --import << _EOF_
         ${{ secrets.GPG_KEY }}

@@ -1035,8 +1035,17 @@ setenv rootuuid "true"' /boot/boot.cmd
 		# DietPi-Build with Armbian kernel/bootloader/firmware
 		elif (( $armbian_repo ))
 		then
-			# Prevent any unintended packages from being installed from Armbian's APT repository, like base-files: https://github.com/MichaIng/DietPi/issues/6227#issuecomment-1713688577
-			cat << '_EOF_' > /etc/apt/preferences.d/dietpi-armbian
+			# Remove obsolete combined keyring
+			[[ -f '/etc/apt/trusted.gpg' ]] && G_EXEC rm /etc/apt/trusted.gpg
+			[[ -f '/etc/apt/trusted.gpg~' ]] && G_EXEC rm '/etc/apt/trusted.gpg~'
+
+			# Remove obsolete lists
+			find /etc/apt/sources.list.d -mindepth 1 ! -name 'dietpi.list' -exec rm -Rf {} +
+
+			if [[ $G_GITBRANCH == 'master' ]]
+			then
+				# Prevent any unintended packages from being installed from Armbian's APT repository, like base-files: https://github.com/MichaIng/DietPi/issues/6227#issuecomment-1713688577
+				cat << '_EOF_' > /etc/apt/preferences.d/dietpi-armbian
 Package: *
 Pin: origin apt.armbian.com
 Pin-Priority: -1
@@ -1045,29 +1054,23 @@ Package: armbian-firmware* linux-*
 Pin: origin apt.armbian.com
 Pin-Priority: 500
 _EOF_
-			if dpkg --compare-versions "$(dpkg-query -Wf '${Version}' base-files)" gt 20
-			then
-				G_DIETPI-NOTIFY 2 'Enforcing downgrade of Armbian'\''s base-files package to Debian'\''s'
-				cat << '_EOF_' > /etc/apt/preferences.d/dietpi-armbian-tmp
+				if dpkg --compare-versions "$(dpkg-query -Wf '${Version}' base-files)" gt 20
+				then
+					G_DIETPI-NOTIFY 2 'Enforcing downgrade of Armbian'\''s base-files package to Debian'\''s'
+					cat << '_EOF_' > /etc/apt/preferences.d/dietpi-armbian-tmp
 Package: base-files
 Pin: release o=Debian
 Pin-Priority: 1000
 _EOF_
-				G_EXEC eval 'echo '\''APT::Get::Allow-Downgrades "1";'\'' > /etc/apt/apt.conf.d/dietpi-armbian'
+					G_EXEC eval 'echo '\''APT::Get::Allow-Downgrades "1";'\'' > /etc/apt/apt.conf.d/dietpi-armbian'
+				fi
+
+				# Bootstrap Armbian repository
+				G_EXEC_RETRIES=2 G_EXEC eval 'curl -sSfL '\''https://apt.armbian.com/armbian.key'\'' | gpg --dearmor -o /etc/apt/trusted.gpg.d/dietpi-armbian.gpg --yes'
+
+				# Add Armbian repository
+				G_EXEC eval "echo 'deb https://apt.armbian.com ${DISTRO_TARGET_NAME/bullseye/bookworm} main' > /etc/apt/sources.list.d/dietpi-armbian.list"
 			fi
-
-			# Bootstrap Armbian repository
-			G_EXEC_RETRIES=2 G_EXEC eval 'curl -sSfL '\''https://apt.armbian.com/armbian.key'\'' | gpg --dearmor -o /etc/apt/trusted.gpg.d/dietpi-armbian.gpg --yes'
-
-			# Remove obsolete combined keyring
-			[[ -f '/etc/apt/trusted.gpg' ]] && G_EXEC rm /etc/apt/trusted.gpg
-			[[ -f '/etc/apt/trusted.gpg~' ]] && G_EXEC rm '/etc/apt/trusted.gpg~'
-
-			# Remove obsolete lists
-			find /etc/apt/sources.list.d -mindepth 1 ! -name 'dietpi.list' -exec rm -Rf {} +
-
-			# Add Armbian repository
-			G_EXEC eval "echo 'deb https://apt.armbian.com ${DISTRO_TARGET_NAME/bullseye/bookworm} main' > /etc/apt/sources.list.d/dietpi-armbian.list"
 
 			# Select kernel, device tree and U-Boot packages
 			local model='odroidn2' kernel='meson64' arch='arm64' branch='current' zstd=()
@@ -1367,14 +1370,7 @@ _EOF_
 			systemctl stop armbian-*
 
 			# Keep currently installed kernel and bootloader packages
-			local apackages=(
-
-				'linux-image-'
-				'linux-dtb-'
-				'linux-u-boot-'
-			)
-
-			for i in "${apackages[@]}"
+			for i in linux-{image,dtb,u-boot}-
 			do
 				while read -r line
 				do
@@ -1383,7 +1379,6 @@ _EOF_
 
 				done < <(dpkg-query -Wf '${Package}\n' | mawk -v pat="^$i" '$0~pat')
 			done
-			unset -v apackages
 
 			# Add initramfs-tools and u-boot-tools, required to convert initramfs images into u-boot format
 			aPACKAGES_REQUIRED_INSTALL+=('initramfs-tools' 'u-boot-tools')
@@ -1433,6 +1428,21 @@ _EOF_
 				G_DIETPI-NOTIFY 2 'Preventing needless kernel and initramfs symlink generation'
 				G_EXEC eval 'echo '\''do_symlinks=0'\'' > /etc/kernel-img.conf'
 				G_EXEC rm -f /{initrd.img,vmlinuz}{,.old}
+			fi
+
+			if [[ -f '/boot/armbianEnv.txt' ]]
+			then
+				# Force legacy network interface names
+				G_CONFIG_INJECT 'extraargs=' 'extraargs=net.ifnames=0' /boot/armbianEnv.txt
+
+				# Disable bootsplash logo, as we removed the file above: https://github.com/MichaIng/DietPi/issues/3932#issuecomment-852376681
+				G_CONFIG_INJECT 'bootlogo=' 'bootlogo=false' /boot/armbianEnv.txt
+
+				# Reset default kernel log verbosity, reduced to "1" on most Armbian images
+				G_CONFIG_INJECT 'verbosity=' 'verbosity=4' /boot/armbianEnv.txt
+
+				# Disable Docker optimisations, since this has some performance drawbacks, enable on Docker install instead
+				G_CONFIG_INJECT 'docker_optimizations=' 'docker_optimizations=off' /boot/armbianEnv.txt
 			fi
 
 		# Generic kernel, device tree, bootloader and firmware package auto detect + initramfs-tools
@@ -2178,22 +2188,6 @@ _EOF_
 		elif [[ $G_HW_MODEL =~ ^(83|87|88)$ ]]
 		then
 			G_EXEC eval 'echo '\''sprdwl_ng'\'' > /etc/modules-load.d/dietpi-enable_wifi.conf'
-		fi
-
-		# Armbian
-		if [[ -f '/boot/armbianEnv.txt' ]]
-		then
-			# Force legacy network interface names
-			G_CONFIG_INJECT 'extraargs=' 'extraargs=net.ifnames=0' /boot/armbianEnv.txt
-
-			# Disable bootsplash logo, as we removed the file above: https://github.com/MichaIng/DietPi/issues/3932#issuecomment-852376681
-			G_CONFIG_INJECT 'bootlogo=' 'bootlogo=false' /boot/armbianEnv.txt
-
-			# Reset default kernel log verbosity, reduced to "1" on most Armbian images
-			G_CONFIG_INJECT 'verbosity=' 'verbosity=4' /boot/armbianEnv.txt
-
-			# Disable Docker optimisations, since this has some performance drawbacks, enable on Docker install instead
-			G_CONFIG_INJECT 'docker_optimizations=' 'docker_optimizations=off' /boot/armbianEnv.txt
 		fi
 
 		#------------------------------------------------------------------------------------------------

@@ -424,6 +424,13 @@ then
 		[[ ${apackages[0]} ]] && G_EXEC apt-mark unhold "${apackages[@]}"
 		unset -v apackages
 	fi
+
+	# Remove Armbian APT repository from all systems which have an "all" component for kernel/bootloader/firmware packages form our APT repository
+	if [[ -f '/etc/apt/sources.list.d/dietpi-armbian.list' && -f '/etc/apt/sources.list.d/dietpi.list' ]] && grep -q 'dietpi.com/apt all' /etc/apt/sources.list.d/dietpi.list
+	then
+		G_DIETPI-NOTIFY 2 'Removing obsolete Armbian APT repository'
+		G_EXEC rm /etc/apt/sources.list.d/dietpi-armbian.list
+	fi
 fi
 
 exit 0
